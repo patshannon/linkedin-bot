@@ -1,0 +1,99 @@
+# ──────────────────────────────────────────────────────────────────────
+# AI Configuration — Tweak model settings and prompt instructions here
+# ──────────────────────────────────────────────────────────────────────
+
+# ── Model Settings ──
+model: "claude-sonnet-4-6"
+resume_max_tokens: 2000
+cover_letter_max_tokens: 1500
+temperature: 1.0                     # 0.0 = deterministic, 1.0 = default, higher = more creative
+
+# ── Default Generation Count ──
+default_top_n: 5
+
+# ── Global Instructions ──
+# These rules apply to ALL generated content (resumes AND cover letters).
+# Add any stylistic or formatting rules you want Claude to always follow.
+global_instructions: |
+  - Do NOT use em dashes in prose or cover letter body text. They are only permitted in job title formatting (e.g. 'Title — Company').
+  - LIMIT the use of overly flowery or buzzword-heavy language (e.g., "synergy", "leverage", "spearhead").
+  - Use clear, direct language. Write like a human, not a corporate template.
+  - Do NOT start sentences with "As a..." or "With X years of experience..."
+  - Avoid generic filler phrases like "I am excited to apply" or "I believe I would be a great fit"
+  - Use strong action verbs (e.g., Built, Architected, Reduced, Led, Designed, Implemented, Delivered)
+  - Always use "Developer" instead of "Engineer" — this is intentional for the Canadian job market
+
+# ── Resume Prompt Instructions ──
+# These instructions are sent to Claude along with your base resume and the job description.
+# Tweak these to change how Claude tailors your resume.
+resume_instructions: |
+  1. Keep ALL factual information from the base resume — do NOT invent experience, skills, or achievements
+  2. Reorder and emphasize skills/experience that best match the job description
+  3. Adjust the SUMMARY to highlight the most relevant experience for this specific role
+  4. In the CORE SKILLS section, put the most relevant skills first
+  5. In the EXPERIENCE bullet points, reorder to put the most relevant achievements first
+  6. Keep the same section structure: SUMMARY, CORE SKILLS, EXPERIENCE, PROJECTS, EDUCATION, VOLUNTEERING
+  7. Target 1-2 pages — do not cut important achievements to fit one page
+  8. Do NOT add skills or experience the candidate doesn't have
+  9. Use professional, concise language
+  10. Structure bullet points using: Action verb + Technology/context + Impact + Scope (e.g. "Reduced Algolia search traffic by 95% across 3 production platforms")
+  11. Extract keywords from the job description and weave them naturally into the SUMMARY and EXPERIENCE sections to optimize for ATS
+  12. Preserve the two separate bbox.digital role entries (Lead Developer & Technical Consultant, and Frontend Tech Lead) — do NOT merge them into one
+  13. Keep the PROJECTS section exactly as-is — do not reword, reorder, or modify project descriptions
+
+# ── Cover Letter Prompt Instructions ──
+# These instructions control how Claude writes your cover letters.
+cover_letter_instructions: |
+  1. Write a professional, concise cover letter (3-4 paragraphs)
+  2. Opening: Express genuine interest in the specific role and company
+  3. Body: Highlight 2-3 specific achievements from the resume that directly match the job requirements
+  4. Include specific metrics where possible (e.g., "reduced API calls by 20%", "95% reduction in search traffic")
+  5. Show understanding of what the company does and why the candidate is a good fit
+  6. Where relevant, reference the candidate's consultant experience — owning client relationships end-to-end, leading meetings, scoping and delivering solo — as this is a key differentiator
+  7. Closing: Express enthusiasm and availability
+  8. Tone: Professional but personable, confident but not arrogant
+  9. Do NOT invent achievements — only reference what's in the resume
+  10. Keep it under 400 words
+  11. Do NOT include the date, address blocks, or "Dear Hiring Manager" — start directly with the opening paragraph
+  12. Do NOT use em dashes in prose or cover letter body text. They are only permitted in job title formatting (e.g. 'Title — Company').
+
+# ── Resume Output Format ──
+# This tells Claude what format to return the resume in.
+# Change this if you want a different section structure.
+resume_output_format: |
+  Return ONLY the tailored resume in Markdown format, no commentary or explanations.
+  Use this exact structure:
+
+  ## SUMMARY
+  [tailored summary paragraph]
+
+  ## CORE SKILLS
+  **Category:** skill1, skill2, ...
+
+  ## EXPERIENCE
+  **Job Title — Company (Location)**
+  *Date Range*
+  - Bullet point achievements
+
+  ## PROJECTS
+  [same projects — do not modify]
+
+  ## EDUCATION
+  [same education]
+
+  ## VOLUNTEERING
+  [same volunteering]
+
+# ── Cover Letter Output Format ──
+cover_letter_output_format: |
+  Return ONLY the cover letter text, no commentary.
+
+# ── Personal Info (used in DOCX header and signature) ──
+personal:
+  name: "Patrick Shannon"
+  title: "Lead Developer & Technical Consultant"
+  location: "Halifax, NS"
+  email: "peshannon104@gmail.com"
+  linkedin: "linkedin.com/in/patrick-e-shannon"
+  github: "github.com/patshannon"
+  website: "patrickshannon.vercel.app"

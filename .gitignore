@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+
+# Output files
+best_matches*.csv
+jobs*.csv
+output_*/
+applications.csv
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+#AI
+.claude
