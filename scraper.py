@@ -31,7 +31,7 @@ from playwright.sync_api import sync_playwright, Page, Browser, TimeoutError as 
 # Each query is a dict with search parameters.
 # LinkedIn public search URL params:
 #   f_JT=F        → Full-time
-#   f_TPR=r86400  → Last 24 hours
+#   f_TPR=r86400  → Last 24 hours, r604800 for last week.
 #   f_WT=2        → Remote
 #   geoId=101174742 → Canada
 #   sortBy=R      → Most relevant
