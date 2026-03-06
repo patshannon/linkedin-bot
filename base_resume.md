@@ -37,7 +37,7 @@ Full-stack developer and technical consultant with 5+ years building production 
 - Collaborated with founders and product teams to shape technical roadmaps and plan iterative releases.
 
 **Web Developer / Web Designer — Upwork (Remote)**
-*May 2021 – Dec 2021*
+*May 2021 – Feb 2022*
 
 - Designed and developed 5+ responsive client websites using Webflow, Figma, and JavaScript.
 

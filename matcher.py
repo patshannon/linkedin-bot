@@ -146,6 +146,7 @@ NEGATIVE_KEYWORDS: dict[str, int] = {
     "java ": 10,  # trailing space to avoid matching "javascript"
     "angular": 5,
     "vue": 10,
+    "ember": 10,
     "ruby on rails": 10,
     "ruby": 10,
     "php": 10,
