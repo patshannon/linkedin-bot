@@ -5,6 +5,7 @@
 best_matches*.csv
 jobs*.csv
 output_*/
+linkedin_*/
 applications.csv
 # Secrets
 .env
