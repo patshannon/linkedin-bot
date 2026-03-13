@@ -98,9 +98,10 @@ def score_batch(
 </resume>
 
 IMPORTANT CONTEXT about the candidate:
-- Located in Nova Scotia, Canada. MUST be remote-friendly to NS.
-- Jobs requiring on-site, hybrid, security clearance, or US citizenship are POOR fits (score low).
-- Canadian remote jobs that list specific provinces but exclude Nova Scotia are POOR fits.
+- Located in Nova Scotia, Canada. MUST be fully remote and available to NS residents.
+- Jobs mentioning "hybrid", "on-site", "onsite", or "hybrid working model" are POOR fits — score 30 or below. Even if the job also mentions remote perks, hybrid means in-office time is expected.
+- Jobs requiring security clearance or US citizenship are POOR fits — score 20 or below.
+- Canadian remote jobs that list specific provinces but exclude Nova Scotia are POOR fits — score 30 or below.
 - Has 5+ years of experience. Junior/intern roles are poor fits. Staff/principal/10+ year roles are stretches.
 - Core stack: React, Next.js, TypeScript, Node.js, Python, GCP/Firebase.
 - Strong preference for full-stack or frontend-heavy roles at senior/lead level.
