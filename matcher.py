@@ -1,185 +1,38 @@
 """
-Job Matcher — Phase 1: Non-AI Keyword Weighting System
+Job Matcher — AI-Powered Matching with Claude Haiku
 
-Reads scraped LinkedIn jobs from a CSV, scores each job against
-a weighted keyword profile extracted from your resume, and outputs
-the top matches to a new CSV file.
+Reads scraped LinkedIn jobs from a CSV, sends them in batches to Claude Haiku
+along with your resume, and gets AI-powered relevance scores and rankings.
 
 Usage:
     python matcher.py                       # auto-detects latest jobs_*.csv file
     python matcher.py --input jobs.csv      # use a specific file
     python matcher.py --top 20              # show top 20 matches (default: 25)
+    python matcher.py --resume my_resume.md # use a different resume
 """
 
 import csv
+import json
 import re
 import glob
 import os
 import argparse
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from anthropic import Anthropic
 
 # ──────────────────────────────────────────────────────────────────────
-# CONFIGURATION — Adjust these weights to tune your matching
+# CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────
 
-# Positive keywords: {keyword_or_phrase: weight}
-# Higher weight = more important to you
-POSITIVE_KEYWORDS: dict[str, int] = {
-    # ── Core Stack (highest weight) ──
-    "react": 10,
-    "next.js": 10,
-    "nextjs": 10,
-    "typescript": 10,
-    "node.js": 9,
-    "nodejs": 9,
-    "python": 9,
+MODEL = "claude-sonnet-4-6"
+BATCH_SIZE = 50
+RESUME_PATH = "base_resume.md"
 
-    # ── Frontend ──
-    "javascript": 7,
-    "tailwind": 6,
-    "html": 4,
-    "css": 4,
-    "frontend": 6,
-    "front-end": 6,
-    "full-stack": 8,
-    "full stack": 8,
-    "fullstack": 8,
-
-    # ── Backend & APIs ──
-    "rest api": 6,
-    "graphql": 7,
-    "microservices": 7,
-    "api": 4,
-
-    # ── Databases & Caching ──
-    "mongodb": 4,
-    "postgresql": 3,
-    "postgres": 3,
-    "firestore": 7,
-    "sql": 3,
-    "caching": 4,
-
-    # ── Cloud & DevOps ──
-    "gcp": 7,
-    "firebase": 6,
-    "google cloud": 7,
-    "cloudflare": 5,
-    "cloudflare workers": 4,
-    "cloud functions": 6,
-    "docker": 4,
-    "ci/cd": 5,
-    "github actions": 5,
-
-    # ── Testing ──
-    "jest": 5,
-    "playwright": 5,
-    "testing": 3,
-    "e2e testing": 6,
-    "unit testing": 6,
-    "integration testing": 6,
-
-    # ── Auth ──
-    "jwt": 4,
-    "oauth": 4,
-    "authentication": 3,
-    "firebase auth": 7,
-    "session management": 4,
-
-    # ── Search & CMS ──
-    "algolia": 6,
-    "headless cms": 5,
-    "cms": 3,
-    "web components": 5,
-    "sanity": 4,
-
-    # ── Performance & Monitoring ──
-    "core web vitals": 5,
-    "lighthouse": 4,
-    "monitoring": 3,
-    "cloud logging": 4,
-
-    # ── Design ──
-    "figma": 4,
-
-    # ── Soft / Role Signals ──
-    "startup": 4,
-    "mentorship": 3,
-    "code review": 3,
-    "system design": 5,
-    "performance": 4,
-    "seo": 4,
-    "remote": 10,
-    "senior": 8,
-    "lead": 7,
-    "tech lead": 8,
-
-    # ── AI-Assisted Dev ──
-    "claude": 3,
-    "copilot": 3,
-    "ai-assisted": 3,
-}
-
-# Negative keywords: {keyword_or_phrase: penalty}
-# These SUBTRACT from the score (use positive numbers — they are subtracted)
-NEGATIVE_KEYWORDS: dict[str, int] = {
-    # ── Location Restrictions ──
-    "on-site": 50,
-    "onsite": 50,
-    "hybrid": 50,
-    "office": 15,
-
-    # ── Clearance / Restrictions ──
-    "security clearance": 50,
-    "secret clearance": 50,
-    "top secret": 50,
-    "ts/sci": 50,
-    "public trust": 30,
-    "us citizen": 40,
-    "u.s. citizen": 40,
-    "united states citizen": 40,
-
-    # ── Unrelated Stacks ──
-    "c++": 10,
-    "c#": 10,
-    ".net": 10,
-    "java ": 10,  # trailing space to avoid matching "javascript"
-    "angular": 5,
-    "vue": 10,
-    "ember": 10,
-    "ruby on rails": 10,
-    "ruby": 10,
-    "php": 10,
-    "scala": 10,
-    "rust": 10,
-    "swift": 10,
-    "kotlin": 10,
-    "objective-c": 10,
-    "flutter": 10,
-    "react native": 3,
-    "kubernetes": 10,
-    "golang": 10,
-
-    # ── Seniority Mismatch ──
-    "staff engineer": 30,
-    "staff software": 30,
-    "principal": 50,
-    "junior": 10,
-    "intern": 15,
-    "internship": 15,
-    "entry level": 8,
-    "entry-level": 8,
-    "new grad": 5,
-
-    # ── Domain Mismatch (optional — remove if you're open to these) ──
-    "embedded": 5,
-    "firmware": 5,
-    "fpga": 8,
-    "verilog": 8,
-}
 
 # ──────────────────────────────────────────────────────────────────────
-# SCORING ENGINE
+# DATA STRUCTURES
 # ──────────────────────────────────────────────────────────────────────
 
 
@@ -189,99 +42,132 @@ class ScoredJob:
     company_name: str
     job_link: str
     score: int
-    matched_positive: list[str] = field(default_factory=list)
-    matched_negative: list[str] = field(default_factory=list)
+    pros: str = ""
+    cons: str = ""
 
 
-def normalize_text(text: str) -> str:
-    """Lowercase and collapse whitespace for consistent matching."""
-    text = text.lower()
-    text = re.sub(r"\s+", " ", text)
-    return text
+# ──────────────────────────────────────────────────────────────────────
+# API KEY
+# ──────────────────────────────────────────────────────────────────────
 
 
-def score_experience(text: str) -> tuple[int, str]:
-    """
-    Find year-of-experience requirements and score based on fit for a 5+ year candidate.
-    Returns (score_delta, label) where label is empty string if no requirement found.
-    """
-    # Intentionally strict: only match explicit "N+ years" requirements.
-    # Avoids edge cases like timeline phrases (e.g., "in 1 year").
-    matches = re.findall(r'(\d+)\s*\+\s*years?\b', text)
-    if not matches:
-        return 0, ""
-
-    years = [int(m) for m in matches]
-    min_req = min(years)
-
-    if min_req == 5:
-        return +15, f"exp: {min_req}+ yrs (+15)"   # ideal
-    elif min_req in (4, 6):
-        return +10, f"exp: {min_req}+ yrs (+10)"   # close to ideal
-    elif min_req in (3, 7):
-        return +5, f"exp: {min_req}+ yrs (+5)"     # still viable
-    elif min_req <= 2:
-        return -30, f"exp: {min_req}+ yrs (-30)"   # too junior
-    elif min_req <= 10:
-        return -15, f"exp: {min_req}+ yrs (-15)"   # stretch
-    else:
-        return -25, f"exp: {min_req}+ yrs (-25)"   # unrealistic
+def get_api_key() -> str | None:
+    """Load ANTHROPIC_API_KEY from environment or .env file."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if api_key:
+        return api_key
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                if line.strip().startswith("ANTHROPIC_API_KEY="):
+                    return line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+    return None
 
 
-def score_job(job_description: str, job_title: str) -> tuple[int, list[str], list[str]]:
-    """
-    Score a job based on keyword matches in the description AND title.
-    Title matches get a 1.5x bonus since they signal core role focus.
-    Returns (score, matched_positive_keywords, matched_negative_keywords).
-    """
-    desc = normalize_text(job_description)
-    title = normalize_text(job_title)
-    combined = f"{title} {desc}"
+# ──────────────────────────────────────────────────────────────────────
+# RESUME & AI SCORING
+# ──────────────────────────────────────────────────────────────────────
 
-    score = 0
-    matched_pos: list[str] = []
-    matched_neg: list[str] = []
 
-    remote_friendly_signals = [
-        "remote-friendly",
-        "remote friendly",
-        "remote-first",
-        "remote first",
-        "fully remote",
-        "remote within",
-    ]
-    has_remote_friendly_signal = any(signal in combined for signal in remote_friendly_signals)
+def load_resume(path: str = RESUME_PATH) -> str:
+    """Load the base resume markdown."""
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
 
-    for keyword, weight in POSITIVE_KEYWORDS.items():
-        kw = keyword.lower()
-        # Count occurrences in description
-        desc_count = len(re.findall(re.escape(kw), desc))
-        # Check title (bonus)
-        title_match = 1 if kw in title else 0
 
-        if desc_count > 0 or title_match > 0:
-            # First occurrence gets full weight, additional occurrences get diminishing returns
-            keyword_score = weight + (min(desc_count - 1, 3) * (weight // 3)) + (title_match * (weight // 2))
-            score += keyword_score
-            matched_pos.append(f"{keyword} (+{keyword_score})")
+def score_batch(
+    client: Anthropic,
+    jobs_batch: list[dict[str, str]],
+    resume: str,
+    batch_num: int,
+    total_batches: int,
+) -> list[dict]:
+    """Send a batch of jobs to Claude Haiku for scoring."""
+    jobs_text = ""
+    for i, job in enumerate(jobs_batch):
+        jobs_text += f"\n---JOB {i}---\n"
+        jobs_text += f"Title: {job.get('job_title', '').strip()}\n"
+        jobs_text += f"Company: {job.get('company_name', '').strip()}\n"
+        jobs_text += f"Description: {job.get('job_description', '').strip()}\n"
 
-    for keyword, penalty in NEGATIVE_KEYWORDS.items():
-        kw = keyword.lower()
-        if kw == "hybrid" and has_remote_friendly_signal:
-            continue
-        if kw in combined:
-            score -= penalty
-            matched_neg.append(f"{keyword} (-{penalty})")
+    prompt = f"""You are a job matching assistant. Score each job for how well it matches this candidate's resume.
 
-    exp_delta, exp_label = score_experience(desc)
-    if exp_label:
-        score += exp_delta
-        if exp_delta >= 0:
-            matched_pos.append(exp_label)
-        else:
-            matched_neg.append(exp_label)
+<resume>
+{resume}
+</resume>
 
-    return score, matched_pos, matched_neg
+IMPORTANT CONTEXT about the candidate:
+- Located in Nova Scotia, Canada. MUST be remote-friendly to NS.
+- Jobs requiring on-site, hybrid, security clearance, or US citizenship are POOR fits (score low).
+- Canadian remote jobs that list specific provinces but exclude Nova Scotia are POOR fits.
+- Has 5+ years of experience. Junior/intern roles are poor fits. Staff/principal/10+ year roles are stretches.
+- Core stack: React, Next.js, TypeScript, Node.js, Python, GCP/Firebase.
+- Strong preference for full-stack or frontend-heavy roles at senior/lead level.
+
+Score each job 0-100:
+- 90-100: Exceptional match (core stack, right seniority, remote, interesting domain)
+- 70-89: Strong match (most requirements align)
+- 50-69: Decent match (some overlap, some gaps)
+- 30-49: Weak match (significant mismatches in stack, seniority, or location)
+- 0-29: Poor match (wrong stack, wrong level, location/clearance issues)
+
+For each job, list:
+- "pros": reasons this job is a GOOD fit for THIS SPECIFIC candidate (matching skills, relevant experience, compatible location, etc.)
+- "cons": reasons this job is a POOR fit for THIS SPECIFIC candidate (skills they lack, stack mismatch, location issues, etc.)
+
+A technology the candidate does NOT have experience with is ALWAYS a con, never a pro — even if the job offers it.
+
+Return ONLY a JSON array, no other text. Each element must have these exact keys:
+[
+  {{"job_index": 0, "score": 85, "pros": "react, next.js, remote, 5+ years", "cons": "requires AWS experience"}},
+  ...
+]
+
+<jobs>
+{jobs_text}
+</jobs>"""
+
+    print(f"  Scoring batch {batch_num}/{total_batches} ({len(jobs_batch)} jobs)...")
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=8192,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    text = response.content[0].text.strip()
+
+    # Strip markdown code fences if present
+    text = re.sub(r'^```(?:json)?\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+
+    # Extract JSON array from response
+    json_match = re.search(r'\[.*\]', text, re.DOTALL)
+    if not json_match:
+        print(f"  ⚠️  Batch {batch_num}: Could not parse AI response, skipping.")
+        print(f"      Response preview: {text[:300]}")
+        return []
+
+    try:
+        results = json.loads(json_match.group())
+    except json.JSONDecodeError as e:
+        print(f"  ⚠️  Batch {batch_num}: Invalid JSON in AI response, skipping.")
+        print(f"      Error: {e}")
+        return []
+
+    # Report token usage and cost
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    cost = (input_tokens * 3.00 + output_tokens * 15.00) / 1_000_000
+    print(f"  ✓ Batch {batch_num} done — {input_tokens:,} in / {output_tokens:,} out (${cost:.4f})")
+
+    return results
+
+
+# ──────────────────────────────────────────────────────────────────────
+# CSV & DEDUP HELPERS
+# ──────────────────────────────────────────────────────────────────────
 
 
 def load_jobs(file_path: str) -> list[dict[str, str]]:
@@ -312,54 +198,85 @@ def load_applied_links(path: str = "applications.csv") -> set[str]:
         }
 
 
-def match_jobs(jobs: list[dict[str, str]]) -> list[ScoredJob]:
-    """Score, deduplicate, and rank all jobs."""
-    scored: list[ScoredJob] = []
+def deduplicate_jobs(jobs: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Remove already-applied and duplicate jobs."""
+    unique: list[dict[str, str]] = []
     seen_links: set[str] = set()
+    seen_title_company: set[tuple[str, str]] = set()
     applied_links = load_applied_links()
     skipped_applied = 0
 
     for job in jobs:
-        # Skip already-applied jobs
         link = job.get("job_link", "").strip()
         if strip_tracking_params(link) in applied_links:
             skipped_applied += 1
             continue
 
-        # Deduplicate by job link OR by title+company (LinkedIn posts same role with different IDs)
-        title_company_key = (job.get("job_title", "").strip().lower(), job.get("company_name", "").strip().lower())
-        if link in seen_links or title_company_key in seen_links:
-            continue
-        seen_links.add(link)
-        seen_links.add(title_company_key)
-
-        description = job.get("job_description", "")
-        title = job.get("job_title", "")
-        score, pos, neg = score_job(description, title)
-        scored.append(
-            ScoredJob(
-                job_title=title.strip(),
-                company_name=job.get("company_name", "").strip(),
-                job_link=link,
-                score=score,
-                matched_positive=pos,
-                matched_negative=neg,
-            )
+        title_company_key = (
+            job.get("job_title", "").strip().lower(),
+            job.get("company_name", "").strip().lower(),
         )
+        clean_link = strip_tracking_params(link)
+        if clean_link in seen_links or title_company_key in seen_title_company:
+            continue
+        seen_links.add(clean_link)
+        seen_title_company.add(title_company_key)
+        unique.append(job)
 
     if skipped_applied > 0:
         print(f"Skipped {skipped_applied} already-applied job(s).")
-    dupes_removed = len(jobs) - len(scored) - skipped_applied
+    dupes_removed = len(jobs) - len(unique) - skipped_applied
     if dupes_removed > 0:
         print(f"Removed {dupes_removed} duplicate job(s).")
+
+    return unique
+
+
+# ──────────────────────────────────────────────────────────────────────
+# MAIN MATCHING PIPELINE
+# ──────────────────────────────────────────────────────────────────────
+
+
+def match_jobs(jobs: list[dict[str, str]], resume: str, client: Anthropic) -> list[ScoredJob]:
+    """Send jobs to Claude Haiku in batches and collect scores."""
+    scored: list[ScoredJob] = []
+
+    batches = [jobs[i:i + BATCH_SIZE] for i in range(0, len(jobs), BATCH_SIZE)]
+    total_batches = len(batches)
+    total_cost = 0.0
+
+    print(f"\n🤖 Scoring {len(jobs)} jobs in {total_batches} batch(es) using {MODEL}...\n")
+
+    for batch_num, batch in enumerate(batches, start=1):
+        results = score_batch(client, batch, resume, batch_num, total_batches)
+
+        for result in results:
+            idx = result.get("job_index", -1)
+            if 0 <= idx < len(batch):
+                job = batch[idx]
+                scored.append(
+                    ScoredJob(
+                        job_title=job.get("job_title", "").strip(),
+                        company_name=job.get("company_name", "").strip(),
+                        job_link=job.get("job_link", "").strip(),
+                        score=result.get("score", 0),
+                        pros=result.get("pros", ""),
+                        cons=result.get("cons", ""),
+                    )
+                )
 
     scored.sort(key=lambda j: j.score, reverse=True)
     return scored
 
 
+# ──────────────────────────────────────────────────────────────────────
+# OUTPUT
+# ──────────────────────────────────────────────────────────────────────
+
+
 def export_results(scored_jobs: list[ScoredJob], output_path: str) -> None:
     """Export scored jobs to a CSV file."""
-    fieldnames = ["rank", "score", "job_title", "company_name", "job_link", "matched_keywords", "penalties"]
+    fieldnames = ["rank", "score", "job_title", "company_name", "job_link", "pros", "cons"]
     with open(output_path, mode="w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -371,8 +288,8 @@ def export_results(scored_jobs: list[ScoredJob], output_path: str) -> None:
                     "job_title": job.job_title,
                     "company_name": job.company_name,
                     "job_link": job.job_link,
-                    "matched_keywords": "; ".join(job.matched_positive),
-                    "penalties": "; ".join(job.matched_negative),
+                    "pros": job.pros,
+                    "cons": job.cons,
                 }
             )
 
@@ -380,30 +297,24 @@ def export_results(scored_jobs: list[ScoredJob], output_path: str) -> None:
 def print_results(scored_jobs: list[ScoredJob], top_n: int) -> None:
     """Pretty-print the top N results to the terminal."""
     print(f"\n{'='*80}")
-    print(f"  TOP {min(top_n, len(scored_jobs))} JOB MATCHES")
+    print(f"  TOP {min(top_n, len(scored_jobs))} JOB MATCHES (AI-scored)")
     print(f"{'='*80}\n")
 
     for i, job in enumerate(scored_jobs[:top_n], start=1):
-        score_bar = "█" * min(job.score // 3, 40)  # visual score bar
-        print(f"  #{i:>2}  Score: {job.score:>4}  {score_bar}")
+        score_bar = "█" * (job.score // 2)
+        print(f"  #{i:>2}  Score: {job.score:>3}/100  {score_bar}")
         print(f"       {job.job_title}")
         print(f"       {job.company_name}")
-        pos_keywords = [kw for kw in job.matched_positive if not kw.startswith("exp:")]
-        neg_keywords = [kw for kw in job.matched_negative if not kw.startswith("exp:")]
-        exp_label = next((kw for kw in job.matched_positive + job.matched_negative if kw.startswith("exp:")), None)
-        if pos_keywords:
-            print(f"       ✅ {', '.join(kw.split(' (')[0] for kw in pos_keywords[:8])}")
-        if neg_keywords:
-            print(f"       ❌ {', '.join(kw.split(' (')[0] for kw in neg_keywords)}")
-        if exp_label:
-            print(f"       🗓  {exp_label}")
+        if job.pros:
+            print(f"       ✅ {job.pros}")
+        if job.cons:
+            print(f"       ❌ {job.cons}")
         print(f"       🔗 {job.job_link[:80]}...")
         print()
 
-    # Summary stats
     scores = [j.score for j in scored_jobs]
     print(f"{'─'*80}")
-    print(f"  Total jobs analyzed: {len(scored_jobs)}")
+    print(f"  Total jobs scored: {len(scored_jobs)}")
     print(f"  Score range: {min(scores)} — {max(scores)}")
     print(f"  Average score: {sum(scores) / len(scores):.1f}")
     print(f"{'─'*80}\n")
@@ -413,20 +324,14 @@ def print_results(scored_jobs: list[ScoredJob], top_n: int) -> None:
 # FILE DISCOVERY
 # ──────────────────────────────────────────────────────────────────────
 
+
 def find_latest_jobs_csv() -> str | None:
-    """
-    Find the most recent jobs_*.csv file by filesystem modification time.
-    The scraper outputs files like jobs_2026-03-04_12-09-00.csv.
-    Falls back to jobs.csv if no timestamped files exist.
-    """
-    # Look for timestamped files first (jobs_YYYY-MM-DD_HH-MM-SS.csv)
+    """Find the most recent jobs_*.csv file by filesystem modification time."""
     timestamped_files = glob.glob("jobs_*.csv")
     if timestamped_files:
-        # Sort by modification time, newest first
         timestamped_files.sort(key=os.path.getmtime, reverse=True)
         return timestamped_files[0]
 
-    # Fall back to plain jobs.csv
     if os.path.exists("jobs.csv"):
         return "jobs.csv"
 
@@ -437,12 +342,26 @@ def find_latest_jobs_csv() -> str | None:
 # MAIN
 # ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Score and rank LinkedIn jobs by keyword match.")
-    parser.add_argument("--input", "-i", default=None, help="Path to input CSV file (default: auto-detect latest jobs_*.csv)")
-    parser.add_argument("--output", "-o", default=None, help="Path to output CSV file (default: best_matches_<timestamp>.csv)")
+    parser = argparse.ArgumentParser(description="AI-powered job matching with Claude Haiku.")
+    parser.add_argument("--input", "-i", default=None, help="Path to input CSV (default: auto-detect latest jobs_*.csv)")
+    parser.add_argument("--output", "-o", default=None, help="Path to output CSV (default: best_matches_<timestamp>.csv)")
     parser.add_argument("--top", "-t", type=int, default=25, help="Number of top matches to display (default: 25)")
+    parser.add_argument("--resume", "-r", default=RESUME_PATH, help=f"Path to resume markdown (default: {RESUME_PATH})")
     args = parser.parse_args()
+
+    # Check API key
+    api_key = get_api_key()
+    if not api_key:
+        print("❌ ANTHROPIC_API_KEY not found.")
+        print("   Set it as an environment variable:")
+        print("     export ANTHROPIC_API_KEY=sk-ant-...")
+        print("   Or create a .env file with:")
+        print("     ANTHROPIC_API_KEY=sk-ant-...")
+        return
+
+    client = Anthropic(api_key=api_key)
 
     # Resolve input file
     if args.input:
@@ -458,18 +377,30 @@ def main() -> None:
             return
         print(f"📂 Auto-detected latest file: {input_file}")
 
-    # Resolve output file
+    # Load resume
+    if not os.path.exists(args.resume):
+        print(f"❌ Resume not found: {args.resume}")
+        return
+    resume = load_resume(args.resume)
+    print(f"📄 Loaded resume from {args.resume}")
+
     output_file = args.output or f"best_matches_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
 
     print(f"Loading jobs from {input_file}...")
     jobs = load_jobs(input_file)
-    print(f"Loaded {len(jobs)} jobs. Scoring...")
+    print(f"Loaded {len(jobs)} jobs.")
 
-    scored_jobs = match_jobs(jobs)
+    jobs = deduplicate_jobs(jobs)
+    print(f"{len(jobs)} unique jobs to score.")
 
-    print_results(scored_jobs, args.top)
-    export_results(scored_jobs, output_file)
-    print(f"Full ranked results exported to {output_file}")
+    scored_jobs = match_jobs(jobs, resume, client)
+
+    if scored_jobs:
+        print_results(scored_jobs, args.top)
+        export_results(scored_jobs, output_file)
+        print(f"Full ranked results exported to {output_file}")
+    else:
+        print("❌ No jobs were scored. Check API key and try again.")
 
 
 if __name__ == "__main__":
